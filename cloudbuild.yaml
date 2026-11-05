@@ -1,0 +1,29 @@
+# CI/CD con Cloud Build (activador sobre la rama main del repositorio de GitHub).
+# Sustituciones: _REGION. Requiere que infra/setup.sh se haya ejecutado una vez.
+substitutions:
+  _REGION: us-central1
+
+steps:
+  - id: build-backend
+    name: gcr.io/cloud-builders/docker
+    args: ['build', '-t', '${_REGION}-docker.pkg.dev/$PROJECT_ID/xsia/xsia-backend:$SHORT_SHA', 'backend']
+
+  - id: push-backend
+    name: gcr.io/cloud-builders/docker
+    args: ['push', '${_REGION}-docker.pkg.dev/$PROJECT_ID/xsia/xsia-backend:$SHORT_SHA']
+
+  # Actualiza solo la imagen: variables y secretos se conservan del despliegue inicial
+  - id: deploy-worker
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: gcloud
+    args: ['run', 'deploy', 'xsia-worker', '--image', '${_REGION}-docker.pkg.dev/$PROJECT_ID/xsia/xsia-backend:$SHORT_SHA', '--region', '${_REGION}']
+
+  - id: deploy-api
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: gcloud
+    args: ['run', 'deploy', 'xsia-api', '--image', '${_REGION}-docker.pkg.dev/$PROJECT_ID/xsia/xsia-backend:$SHORT_SHA', '--region', '${_REGION}']
+
+images:
+  - '${_REGION}-docker.pkg.dev/$PROJECT_ID/xsia/xsia-backend:$SHORT_SHA'
+options:
+  logging: CLOUD_LOGGING_ONLY

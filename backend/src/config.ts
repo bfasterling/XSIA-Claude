@@ -2,7 +2,12 @@
  * Configuración central. Todo se lee de variables de entorno (Cloud Run) y
  * los secretos se montan desde Secret Manager como variables.
  */
-const env = (k: string, d = ''): string => process.env[k] ?? d;
+const PLACEHOLDERS = ['PENDIENTE', 'NONE', 'pending'];
+/** Lee una variable; los valores de relleno de Secret Manager (PENDIENTE/NONE) cuentan como vacíos */
+const env = (k: string, d = ''): string => {
+  const v = process.env[k];
+  return v === undefined || PLACEHOLDERS.includes(v.trim()) ? d : v;
+};
 const num = (k: string, d: number): number => (process.env[k] ? Number(process.env[k]) : d);
 const bool = (k: string, d = false): boolean =>
   process.env[k] ? ['1', 'true', 'yes'].includes(String(process.env[k]).toLowerCase()) : d;

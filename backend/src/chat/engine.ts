@@ -97,7 +97,10 @@ export async function runTurn(p: {
     {
       role: 'user',
       kind: 'user',
-      content: userBlocks,
+      // Las imágenes/documentos en base64 no se persisten (límite de 1 MiB por documento de Firestore)
+      content: userBlocks.map((b: any) =>
+        b.type === 'image' || b.type === 'document' ? { type: 'text', text: `[El usuario adjuntó un ${b.type === 'image' ? 'imagen' : 'documento'}]` } : b,
+      ),
       channel,
       display: { text: userBlocks.filter((b: any) => b.type === 'text').map((b: any) => b.text).join('\n') || '[adjunto]' },
     },
