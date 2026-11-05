@@ -22,7 +22,7 @@ export const config = {
   apiBaseUrl: env('API_BASE_URL', 'http://localhost:8080'),
   corsOrigins: env('CORS_ORIGINS', '*'),
   adminEmails: env('ADMIN_EMAILS', '')
-    .split(',')
+    .split(/[,;\s]+/)
     .map((s) => s.trim().toLowerCase())
     .filter(Boolean),
   defaultTimezone: env('DEFAULT_TIMEZONE', 'America/Mexico_City'),

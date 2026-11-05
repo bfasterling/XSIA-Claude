@@ -75,8 +75,8 @@ Datos de ejemplo: `cd backend && npm run seed:demo`. Con eso queda disponible el
 
 ## Despliegue en GCP
 
-Consulta **[docs/DESPLIEGUE_GCP.md](docs/DESPLIEGUE_GCP.md)**. En resumen:
+Despliegue 100 % en la nube (Google Cloud Console + GitHub + Cloud Build): consulta **[docs/DESPLIEGUE_GCP.md](docs/DESPLIEGUE_GCP.md)**.
 
-```bash
-PROJECT_ID=mi-proyecto REGION=us-central1 ADMIN_EMAILS=yo@empresa.com ./infra/setup.sh
-```
+- `cloudbuild.yaml`: backend → Cloud Run (activador `xsia-backend`)
+- `cloudbuild-frontend.yaml`: frontend → Firebase Hosting + reglas e índices de Firestore (activador `xsia-frontend`)
+- `infra/setup.sh` / `infra/deploy.sh`: alternativa por línea de comandos (Cloud Shell)

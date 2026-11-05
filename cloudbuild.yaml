@@ -1,29 +1,79 @@
-# CI/CD con Cloud Build (activador sobre la rama main del repositorio de GitHub).
-# Sustituciones: _REGION. Requiere que infra/setup.sh se haya ejecutado una vez.
+# =============================================================================
+# XSIA Claude — BACKEND (Cloud Build → Artifact Registry → Cloud Run)
+# Se ejecuta desde un activador de Cloud Build conectado a GitHub (rama main).
+# Despliega:  xsia-worker (privado)  y  xsia-api (público)
+# Las variables _XXX se configuran en el activador (Cloud Build → Activadores).
+# =============================================================================
 substitutions:
   _REGION: us-central1
+  _ADMIN_EMAILS: ''                         # correos administradores, separados por punto y coma (;)
+  _CLAUDE_PROVIDER: anthropic               # anthropic | vertex
+  _CLAUDE_MODEL_CHAT: claude-sonnet-5-5
+  _CLAUDE_MODEL_FAST: claude-haiku-5-5
+  _CLAUDE_VERTEX_REGION: us-east5
+  _EMBEDDINGS_MODEL: text-multilingual-embedding-002
+  _EMBEDDING_DIM: '768'
+  _TIMEZONE: America/Mexico_City
+  _API_MIN_INSTANCES: '1'
 
 steps:
-  - id: build-backend
+  - id: build
     name: gcr.io/cloud-builders/docker
-    args: ['build', '-t', '${_REGION}-docker.pkg.dev/$PROJECT_ID/xsia/xsia-backend:$SHORT_SHA', 'backend']
+    args: ['build', '-t', '${_REGION}-docker.pkg.dev/$PROJECT_ID/xsia/xsia-backend:$BUILD_ID', 'backend']
 
-  - id: push-backend
+  - id: push
     name: gcr.io/cloud-builders/docker
-    args: ['push', '${_REGION}-docker.pkg.dev/$PROJECT_ID/xsia/xsia-backend:$SHORT_SHA']
+    args: ['push', '${_REGION}-docker.pkg.dev/$PROJECT_ID/xsia/xsia-backend:$BUILD_ID']
 
-  # Actualiza solo la imagen: variables y secretos se conservan del despliegue inicial
-  - id: deploy-worker
+  - id: deploy
     name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
-    entrypoint: gcloud
-    args: ['run', 'deploy', 'xsia-worker', '--image', '${_REGION}-docker.pkg.dev/$PROJECT_ID/xsia/xsia-backend:$SHORT_SHA', '--region', '${_REGION}']
+    entrypoint: bash
+    args:
+      - -ceu
+      - |
+        IMAGE="${_REGION}-docker.pkg.dev/$PROJECT_ID/xsia/xsia-backend:$BUILD_ID"
+        RUN_SA="xsia-run@$PROJECT_ID.iam.gserviceaccount.com"
+        TASKS_SA="xsia-tasks@$PROJECT_ID.iam.gserviceaccount.com"
+        SECRETS="ANTHROPIC_API_KEY=anthropic-api-key:latest,META_APP_SECRET=meta-app-secret:latest,META_VERIFY_TOKEN=meta-verify-token:latest,GOOGLE_MAPS_API_KEY=google-maps-api-key:latest"
+        url_of () { gcloud run services describe "$$1" --region ${_REGION} --format='value(status.url)' 2>/dev/null || true; }
 
-  - id: deploy-api
-    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
-    entrypoint: gcloud
-    args: ['run', 'deploy', 'xsia-api', '--image', '${_REGION}-docker.pkg.dev/$PROJECT_ID/xsia/xsia-backend:$SHORT_SHA', '--region', '${_REGION}']
+        WORKER_URL=$$(url_of xsia-worker)
+        API_URL=$$(url_of xsia-api)
+        ENV="GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GCP_REGION=${_REGION},GCS_BUCKET=$PROJECT_ID-xsia-data,GCS_MEDIA_BUCKET=$PROJECT_ID-xsia-media,GCS_MEDIA_PUBLIC=true"
+        ENV="$$ENV,CLAUDE_PROVIDER=${_CLAUDE_PROVIDER},CLAUDE_MODEL_CHAT=${_CLAUDE_MODEL_CHAT},CLAUDE_MODEL_FAST=${_CLAUDE_MODEL_FAST},CLAUDE_VERTEX_REGION=${_CLAUDE_VERTEX_REGION}"
+        ENV="$$ENV,EMBEDDINGS_PROVIDER=vertex,EMBEDDINGS_MODEL=${_EMBEDDINGS_MODEL},EMBEDDING_DIM=${_EMBEDDING_DIM}"
+        ENV="$$ENV,TASKS_LOCATION=${_REGION},TASKS_QUEUE=xsia-default,TASKS_QUEUE_SEND=xsia-recovery-send,TASKS_INVOKER_SA=$$TASKS_SA"
+        ENV="$$ENV,DEFAULT_TIMEZONE=${_TIMEZONE},PUBLIC_BASE_URL=https://$PROJECT_ID.web.app,CORS_ORIGINS=*"
+
+        echo "▶ Worker (privado)"
+        gcloud run deploy xsia-worker --image "$$IMAGE" --region ${_REGION} \
+          --service-account "$$RUN_SA" --no-allow-unauthenticated \
+          --cpu 1 --memory 1Gi --timeout 900 --concurrency 20 --max-instances 10 \
+          --set-env-vars "ROLE=worker,$$ENV,WORKER_URL=$$WORKER_URL,API_BASE_URL=$$API_URL" \
+          --set-secrets "$$SECRETS"
+        WORKER_URL=$$(url_of xsia-worker)
+        gcloud run services add-iam-policy-binding xsia-worker --region ${_REGION} \
+          --member "serviceAccount:$$TASKS_SA" --role roles/run.invoker >/dev/null
+
+        echo "▶ API (pública)"
+        gcloud run deploy xsia-api --image "$$IMAGE" --region ${_REGION} \
+          --service-account "$$RUN_SA" --allow-unauthenticated --no-cpu-throttling \
+          --cpu 1 --memory 1Gi --timeout 300 --concurrency 80 --min-instances ${_API_MIN_INSTANCES} --max-instances 20 \
+          --set-env-vars "ROLE=api,$$ENV,WORKER_URL=$$WORKER_URL,API_BASE_URL=$$API_URL,ADMIN_EMAILS=${_ADMIN_EMAILS}" \
+          --set-secrets "$$SECRETS"
+        API_URL=$$(url_of xsia-api)
+
+        # Primer despliegue: completar URLs cruzadas
+        gcloud run services update xsia-api --region ${_REGION} --update-env-vars "API_BASE_URL=$$API_URL" >/dev/null
+        gcloud run services update xsia-worker --region ${_REGION} --update-env-vars "WORKER_URL=$$WORKER_URL,API_BASE_URL=$$API_URL" >/dev/null
+
+        echo "✅ API:    $$API_URL"
+        echo "✅ Worker: $$WORKER_URL"
+        echo "✅ Webhook WhatsApp: $$API_URL/webhooks/whatsapp"
 
 images:
-  - '${_REGION}-docker.pkg.dev/$PROJECT_ID/xsia/xsia-backend:$SHORT_SHA'
+  - '${_REGION}-docker.pkg.dev/$PROJECT_ID/xsia/xsia-backend:$BUILD_ID'
 options:
   logging: CLOUD_LOGGING_ONLY
+  substitutionOption: ALLOW_LOOSE
+timeout: 1800s

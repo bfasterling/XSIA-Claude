@@ -1,0 +1,46 @@
+# =============================================================================
+# XSIA Claude — FRONTEND (Cloud Build → Firebase Hosting) + reglas e índices de Firestore
+# (incluye el índice vectorial del RAG). Se ejecuta desde un activador conectado a GitHub.
+# Configura en el activador los valores de la App web de Firebase (no son secretos).
+# =============================================================================
+substitutions:
+  _REGION: us-central1
+  _FIREBASE_API_KEY: ''
+  _FIREBASE_AUTH_DOMAIN: ''      # p. ej. mi-proyecto.firebaseapp.com
+  _FIREBASE_APP_ID: ''
+
+steps:
+  - id: api-url
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: bash
+    args:
+      - -ceu
+      - |
+        API_URL=$$(gcloud run services describe xsia-api --region ${_REGION} --format='value(status.url)')
+        cat > frontend/.env.production <<EOF
+        VITE_FIREBASE_API_KEY=${_FIREBASE_API_KEY}
+        VITE_FIREBASE_AUTH_DOMAIN=${_FIREBASE_AUTH_DOMAIN}
+        VITE_FIREBASE_PROJECT_ID=$PROJECT_ID
+        VITE_FIREBASE_APP_ID=${_FIREBASE_APP_ID}
+        VITE_API_BASE_URL=$$API_URL
+        EOF
+        sed -i 's/^ *//' frontend/.env.production
+        sed -i "s/TU-PROYECTO-GCP/$PROJECT_ID/" .firebaserc
+        sed -i "s/\"region\": \"us-central1\"/\"region\": \"${_REGION}\"/g" firebase.json
+        cat frontend/.env.production
+
+  - id: build
+    name: node:20
+    dir: frontend
+    entrypoint: bash
+    args: ['-ceu', 'npm install && npm run build']
+
+  - id: deploy-firebase
+    name: node:20
+    entrypoint: bash
+    args: ['-ceu', 'npx --yes firebase-tools@13 deploy --project $PROJECT_ID --only hosting,firestore:rules,firestore:indexes --non-interactive']
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+  substitutionOption: ALLOW_LOOSE
+timeout: 1200s
